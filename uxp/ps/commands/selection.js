@@ -9,12 +9,16 @@ const {
 const {hasActiveSelection} = require("./utils")
 
 const clearSelection = async () => {
-    await app.activeDocument.selection.selectRectangle(
-        { top: 0, left: 0, bottom: 0, right: 0 },
-        constants.SelectionType.REPLACE,
-        0,
-        true
-    );
+    // Fora de execute() o PS recusa: "saveDocumentSelection ... only allowed
+    // from inside a modal scope".
+    await execute(async () => {
+        await app.activeDocument.selection.selectRectangle(
+            { top: 0, left: 0, bottom: 0, right: 0 },
+            constants.SelectionType.REPLACE,
+            0,
+            true
+        );
+    });
 };
 
 const createMaskFromSelection = async (command) => {
