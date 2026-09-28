@@ -46,6 +46,9 @@ print(f"{mcp_name} running on stdio", file=sys.stderr)
 APPLICATION = "photoshop"
 PROXY_URL = 'http://localhost:3001'
 PROXY_TIMEOUT = 20
+# Geração pelo Firefly medida em 10 a 17 s (28/09/2026), rente ao teto de 20 s:
+# estourar devolve falha enquanto o PS ainda termina a imagem por trás.
+GENERATIVE_TIMEOUT = 120
 
 socket_client.configure(
     app=APPLICATION, 
@@ -388,7 +391,7 @@ def harmonize_layer(layer_id:int,  new_layer_name:str, rasterize_layer:bool = Tr
         "rasterizeLayer":rasterize_layer
     })
 
-    return sendCommand(command)
+    return sendCommand(command, timeout=GENERATIVE_TIMEOUT)
 
 
 @mcp.tool()
@@ -547,7 +550,7 @@ def generate_image(
         "contentType":content_type
     })
 
-    return sendCommand(command)
+    return sendCommand(command, timeout=GENERATIVE_TIMEOUT)
 
 @mcp.tool()
 def generative_fill(
@@ -580,7 +583,7 @@ def generative_fill(
         "contentType":content_type,
     })
 
-    return sendCommand(command)
+    return sendCommand(command, timeout=GENERATIVE_TIMEOUT)
 
 
 @mcp.tool()
