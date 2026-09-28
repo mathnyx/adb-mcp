@@ -1498,6 +1498,236 @@ def apply_motion_blur(layer_id: int, angle: int = 0, distance: float = 30):
     return sendCommand(command)
 
 
+
+# ---------------------------------------------------------------------------
+# Operações de tom e textura que o plugin UXP não expõe como comando próprio.
+# Todas passam por executeBatchPlayCommand (já existente no UXP), portanto não
+# exigem recarregar o plugin. Medidas contra o Photoshop 2026 pt-BR em
+# 2026-09-28: a camada nasce com o kind certo (CURVES, LEVELS, GRADIENTMAP,
+# THRESHOLD, POSTERIZE) e o pixel exportado muda como pedido.
+# O batchPlay não lança exceção em descritor errado: devolve {"_obj": "error"}.
+# Conferir sempre pelo pixel ou por get_layers, nunca só pelo status.
+# ---------------------------------------------------------------------------
+
+def _rgb(c: dict) -> dict:
+    return {"_obj": "RGBColor", "red": c["red"], "grain": c["green"], "blue": c["blue"]}
+
+
+def _batch(commands: list, timeout=None):
+    command = createCommand("executeBatchPlayCommand", {"commands": commands})
+    return sendCommand(command) if timeout is None else sendCommand(command, timeout=timeout)
+
+
+def _select(layer_id: int) -> dict:
+    return {"_obj": "select", "_target": [{"_ref": "layer", "_id": layer_id}], "makeVisible": False}
+
+
+def _adjustment(layer_id: int, tipo: dict, clip: bool):
+    using = {"_obj": "adjustmentLayer", "type": tipo}
+    if clip:
+        using["group"] = True
+    return _batch([_select(layer_id),
+                   {"_obj": "make", "_target": [{"_ref": "adjustmentLayer"}], "using": using}])
+
+
+@mcp.tool()
+def add_curves_adjustment_layer(layer_id: int, points: list, channel: str = "composite", clip: bool = False):
+    """Adds a Curves adjustment layer above the layer with the specified ID.
+
+    Args:
+        layer_id (int): ID of the layer the adjustment sits above.
+        points (list): Curve points as [[input, output], ...], values 0-255, at least 2,
+            ordered by input. Example S-curve: [[0,0],[64,20],[192,235],[255,255]].
+        channel (str): "composite", "red", "green" or "blue".
+        clip (bool): If True, the adjustment is clipped to the layer below (Clipping Mask),
+            so it affects only that layer. If False it affects everything below.
+    """
+    tipo = {"_obj": "curves", "presetKind": {"_enum": "presetKindType", "_value": "presetKindCustom"},
+            "adjustment": [{"_obj": "curvesAdjustment",
+                            "channel": {"_ref": "channel", "_enum": "channel", "_value": channel},
+                            "curve": [{"_obj": "paint", "horizontal": int(i), "vertical": int(o)}
+                                      for i, o in points]}]}
+    return _adjustment(layer_id, tipo, clip)
+
+
+@mcp.tool()
+def add_levels_adjustment_layer(layer_id: int, input_black: int = 0, input_white: int = 255,
+                                gamma: float = 1.0, output_black: int = 0, output_white: int = 255,
+                                clip: bool = False):
+    """Adds a Levels adjustment layer above the layer with the specified ID.
+
+    Args:
+        layer_id (int): ID of the layer the adjustment sits above.
+        input_black (int): Input black point, 0-253.
+        input_white (int): Input white point, 2-255.
+        gamma (float): Midtone gamma, 0.1-9.99 (above 1 lightens midtones).
+        output_black (int): Output black point, 0-255.
+        output_white (int): Output white point, 0-255.
+        clip (bool): Clip to the layer below (affects only it).
+    """
+    tipo = {"_obj": "levels", "presetKind": {"_enum": "presetKindType", "_value": "presetKindCustom"},
+            "adjustment": [{"_obj": "levelsAdjustment",
+                            "channel": {"_ref": "channel", "_enum": "channel", "_value": "composite"},
+                            "input": [input_black, input_white], "gamma": gamma,
+                            "output": [output_black, output_white]}]}
+    return _adjustment(layer_id, tipo, clip)
+
+
+@mcp.tool()
+def add_gradient_map_adjustment_layer(layer_id: int, colors: list, clip: bool = False):
+    """Adds a Gradient Map adjustment layer (duotone, tritone, false color) above the layer.
+
+    Luminance of what is below is remapped to the color stops, darkest to lightest.
+
+    Args:
+        layer_id (int): ID of the layer the adjustment sits above.
+        colors (list): At least 2 stops as [{"red":..,"green":..,"blue":.., "location": 0-100}, ...].
+            "location" is optional; if missing, stops are spread evenly from 0 to 100.
+        clip (bool): Clip to the layer below (affects only it).
+    """
+    n = len(colors)
+    if n < 2:
+        raise ValueError("gradient map needs at least 2 color stops")
+    stops = []
+    for i, c in enumerate(colors):
+        loc = c.get("location", 100 * i / (n - 1))
+        stops.append({"_obj": "colorStop", "color": _rgb(c),
+                      "type": {"_enum": "colorStopType", "_value": "userStop"},
+                      "location": int(round(loc * 40.96)), "midpoint": 50})
+    tipo = {"_obj": "gradientMapClass", "gradient": {
+        "_obj": "gradientClassEvent", "name": "Custom",
+        "gradientForm": {"_enum": "gradientForm", "_value": "customStops"},
+        "interfaceIconFrameDimmed": 4096, "colors": stops,
+        "transparency": [{"_obj": "transferSpec", "opacity": {"_unit": "percentUnit", "_value": 100},
+                          "location": loc, "midpoint": 50} for loc in (0, 4096)]}}
+    return _adjustment(layer_id, tipo, clip)
+
+
+@mcp.tool()
+def add_threshold_adjustment_layer(layer_id: int, level: int = 128, clip: bool = False):
+    """Adds a Threshold adjustment layer: every pixel becomes pure black or pure white.
+
+    Args:
+        layer_id (int): ID of the layer the adjustment sits above.
+        level (int): Luminance cut, 1-255. Pixels at or above become white.
+        clip (bool): Clip to the layer below (affects only it).
+    """
+    return _adjustment(layer_id, {"_obj": "thresholdClassEvent", "level": level}, clip)
+
+
+@mcp.tool()
+def add_posterize_adjustment_layer(layer_id: int, levels: int = 4, clip: bool = False):
+    """Adds a Posterize adjustment layer: reduces each channel to N tonal levels.
+
+    Args:
+        layer_id (int): ID of the layer the adjustment sits above.
+        levels (int): Tonal levels per channel, 2-255.
+        clip (bool): Clip to the layer below (affects only it).
+    """
+    return _adjustment(layer_id, {"_obj": "posterization", "levels": levels}, clip)
+
+
+@mcp.tool()
+def add_hue_saturation_adjustment_layer(layer_id: int, hue: int = 0, saturation: int = 0,
+                                        lightness: int = 0, colorize: bool = False, clip: bool = False):
+    """Adds a Hue/Saturation adjustment layer (master channel).
+
+    Args:
+        layer_id (int): ID of the layer the adjustment sits above.
+        hue (int): -180 to 180.
+        saturation (int): -100 to 100 (0 to 100 when colorize is True).
+        lightness (int): -100 to 100.
+        colorize (bool): Tint everything with a single hue (monotone).
+        clip (bool): Clip to the layer below (affects only it).
+    """
+    tipo = {"_obj": "hueSaturation", "presetKind": {"_enum": "presetKindType", "_value": "presetKindCustom"},
+            "colorize": colorize,
+            "adjustment": [{"_obj": "hueSatAdjustmentV2", "hue": hue, "saturation": saturation,
+                            "lightness": lightness}]}
+    return _adjustment(layer_id, tipo, clip)
+
+
+@mcp.tool()
+def apply_color_halftone(layer_id: int, radius: int = 8, angles: list = [108, 162, 90, 45]):
+    """Applies the Color Halftone filter (Pixelate > Color Halftone) to a pixel layer. Destructive.
+
+    On a grayscale-looking layer the dots come out in RGB channel colors; for a one-ink
+    halftone, apply it then add a Gradient Map or Black & White above.
+
+    Args:
+        layer_id (int): ID of the pixel layer (rasterize first if needed).
+        radius (int): Maximum dot radius in pixels, 4-127.
+        angles (list): Screen angles in degrees for the 4 channels.
+    """
+    a = list(angles) + [45] * (4 - len(angles))
+    return _batch([_select(layer_id),
+                   {"_obj": "colorHalftone", "radius": radius,
+                    "ang1": a[0], "ang2": a[1], "ang3": a[2], "ang4": a[3]}])
+
+
+@mcp.tool()
+def apply_add_noise(layer_id: int, amount: float = 5, gaussian: bool = True, monochromatic: bool = True):
+    """Applies the Add Noise filter (grain) to a pixel layer. Destructive.
+
+    Note: the descriptor echoed back by Photoshop may not match the request (measured:
+    it reported uniform 12.5% when gaussian 12% was sent). Verify in the exported pixel.
+
+    Args:
+        layer_id (int): ID of the pixel layer.
+        amount (float): Noise amount in percent, 0.1-400.
+        gaussian (bool): Gaussian distribution if True, uniform if False.
+        monochromatic (bool): Same noise in all channels (film grain) if True.
+    """
+    dist = "gaussianDistribution" if gaussian else "uniformDistribution"
+    return _batch([_select(layer_id),
+                   {"_obj": "addNoise", "distort": {"_enum": "distort", "_value": dist},
+                    "noise": {"_unit": "percentUnit", "_value": amount}, "monochromatic": monochromatic}])
+
+
+@mcp.tool()
+def apply_high_pass(layer_id: int, radius: float = 3):
+    """Applies the High Pass filter (Other > High Pass) to a pixel layer. Destructive.
+
+    Usual use: duplicate the layer, apply High Pass, set blend mode to OVERLAY or
+    LINEAR_LIGHT with set_layer_properties (sharpening, texture emphasis).
+
+    Args:
+        layer_id (int): ID of the pixel layer.
+        radius (float): Radius in pixels, 0.1-1000.
+    """
+    return _batch([_select(layer_id),
+                   {"_obj": "highPass", "radius": {"_unit": "pixelsUnit", "_value": radius}}])
+
+
+@mcp.tool()
+def close_document(save: bool = False):
+    """Closes the active document. With save=False, discards changes without any dialog.
+
+    Args:
+        save (bool): If True, saves before closing (only safe for documents that already
+            have a file on disk; an untitled document would open a modal Save dialog that
+            blocks every later call).
+    """
+    return _batch([{"_obj": "close", "saving": {"_enum": "yesNo", "_value": "yes" if save else "no"}}])
+
+
+@mcp.tool()
+def batch_play(commands: list):
+    """Escape hatch: runs raw Photoshop batchPlay descriptors in one modal scope.
+
+    Use only when no named tool covers the operation. Photoshop does not raise on a wrong
+    descriptor: it answers {"_obj": "error", ...}. Only the first descriptor's result is
+    returned. Check the result in the pixel (save_document_image_as_png) or get_layers.
+
+    Args:
+        commands (list): List of batchPlay descriptor dicts, e.g.
+            [{"_obj": "select", "_target": [{"_ref": "layer", "_id": 12}]}, {...}].
+    """
+    if not commands:
+        raise ValueError("commands cannot be empty")
+    return _batch(commands)
+
+
 @mcp.resource("config://get_instructions")
 def get_instructions() -> str:
     """Read this first! Returns information and instructions on how to use Photoshop and this API"""
