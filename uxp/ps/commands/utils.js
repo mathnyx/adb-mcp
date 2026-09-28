@@ -198,6 +198,9 @@ const _saveDocumentAs = async (filePath, fileType) => {
             await app.activeDocument.saveAs.png(saveFile, {
             }, true)
         } else {
+            // PSD não vai como cópia: com asCopy=true o documento seguia sem
+            // arquivo, e o save_document seguinte abria o diálogo modal
+            // "Salvar Como", que trava todas as chamadas até um clique humano.
             await app.activeDocument.saveAs.psd(saveFile, {
                 alphaChannels:true,
                 annotations:true,
@@ -205,7 +208,7 @@ const _saveDocumentAs = async (filePath, fileType) => {
                 layers:true,
                 maximizeCompatibility:true,
                 spotColor:true,
-            }, true)
+            }, false)
         }
 
         return {savedFilePath:saveFile.nativePath}

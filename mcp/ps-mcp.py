@@ -25,6 +25,8 @@ from core import init, sendCommand, createCommand
 from fonts import list_all_fonts_postscript
 import numpy as np
 import base64
+from io import BytesIO
+from PIL import Image as PILImage
 import socket_client
 import sys
 import os
@@ -304,44 +306,27 @@ def save_document_image_as_png(file_path: str):
     """
     command = createCommand("getDocumentImage", {})
     response = sendCommand(command)
-    
-    if response.get('format') == 'raw' and 'rawDataBase64' in response:
-        try:
-            # Decode raw data
-            raw_bytes = base64.b64decode(response['rawDataBase64'])
-            
-            # Extract metadata
-            width = response['width']
-            height = response['height']
-            components = response['components']
-            
-            # Convert to numpy array and reshape
-            pixel_array = np.frombuffer(raw_bytes, dtype=np.uint8)
-            image_array = pixel_array.reshape((height, width, components))
-            
-            # Create and save PNG
-            mode = 'RGBA' if components == 4 else 'RGB'
-            image = Image.fromarray(image_array, mode)
-            image.save(file_path, 'PNG')
-            
-            return {
-                'status': 'success',
-                'file_path': file_path,
-                'width': width,
-                'height': height,
-                'size_bytes': os.path.getsize(file_path)
-            }
-            
-        except Exception as e:
-            return {
-                'status': 'error',
-                'error': str(e)
-            }
-    else:
+
+    # O plugin devolve JPEG em base64 dentro de response['response'] (core.js,
+    # getDocumentImage), não o formato 'raw' que este código esperava: a função
+    # nunca gravava o arquivo. Status em maiúsculas, como o resto do servidor.
+    data_url = (response.get('response') or {}).get('dataUrl', '')
+    if response.get('status') != 'SUCCESS' or not data_url.startswith("data:image/jpeg;base64,"):
+        return {'status': 'FAILURE', 'message': 'No image data received'}
+
+    try:
+        jpeg_bytes = base64.b64decode(data_url.split(",", 1)[1])
+        image = PILImage.open(BytesIO(jpeg_bytes)).convert('RGB')
+        image.save(file_path, 'PNG')
         return {
-            'status': 'error',
-            'error': 'No raw image data received'
+            'status': 'SUCCESS',
+            'file_path': file_path,
+            'width': image.width,
+            'height': image.height,
+            'size_bytes': os.path.getsize(file_path)
         }
+    except Exception as e:
+        return {'status': 'FAILURE', 'message': str(e)}
 
 @mcp.tool()
 def get_layers() -> list:
@@ -1142,11 +1127,9 @@ def clear_selection():
     
     """Clears / deselects the current selection"""
 
-    command = createCommand("selectRectangle", {
-        "feather":0,
-        "antiAlias":True,
-        "bounds":{"top": 0, "left": 0, "bottom": 0, "right": 0}
-    })
+    # O plugin tem um handler próprio (selection.js). Mandar selectRectangle
+    # sem layerId quebrava em "Could not find layerId : undefined".
+    command = createCommand("clearSelection", {})
 
     return sendCommand(command)
 

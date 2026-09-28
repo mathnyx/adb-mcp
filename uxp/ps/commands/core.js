@@ -450,6 +450,15 @@ const generativeFill = async (command) => {
 };
 
 const saveDocument = async (command) => {
+    // Documento nunca salvo faria o PS abrir o diálogo "Salvar Como" e travar
+    // a fila de comandos esperando um clique. Falha limpa em vez disso.
+    // (saved vem true em documento novo e intocado, por isso só o path decide)
+    if (!app.activeDocument.path) {
+        throw new Error(
+            "saveDocument : Document has no file yet. Use save_document_as first."
+        );
+    }
+
     await execute(async () => {
         await app.activeDocument.save();
     });
@@ -500,6 +509,7 @@ const createDocument = async (command) => {
     await execute(async () => {
         await app.createDocument({
             typename: "DocumentCreateOptions",
+            name: options.name,
             width: options.width,
             height: options.height,
             resolution: options.resolution,
@@ -509,7 +519,10 @@ const createDocument = async (command) => {
             profile: "sRGB IEC61966-2.1",
         });
 
-        let background = findLayerByName("Background");
+        // O nome da camada de fundo é localizado ("Plano de Fundo" no PS pt-BR):
+        // buscar por "Background" devolve null. Pega a camada pela posição.
+        const doc = app.activeDocument;
+        let background = doc.backgroundLayer || doc.layers[doc.layers.length - 1];
         background.allLocked = false;
         background.name = "Background";
     });
