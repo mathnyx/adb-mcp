@@ -56,13 +56,14 @@ const onCommandPacket = async (packet) => {
         out.response = response;
         out.status = "SUCCESS";
 
+        // Um comando que fecha o último documento (close) deixa activeDocument nulo:
+        // o comando já deu certo, e ler .name dele virava FAILURE depois do sucesso.
         let activeDocument = app.activeDocument
-        let doc = generateDocumentInfo(activeDocument, activeDocument)
-        out.document = doc;
-
-        out.layers = await getLayers();
-
-        out.hasActiveSelection = hasActiveSelection();
+        if (activeDocument) {
+            out.document = generateDocumentInfo(activeDocument, activeDocument);
+            out.layers = await getLayers();
+            out.hasActiveSelection = hasActiveSelection();
+        }
     } catch (e) {
         out.status = "FAILURE";
         out.message = `Error calling ${command.action} : ${e}`;

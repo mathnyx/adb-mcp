@@ -128,8 +128,12 @@ const placeImage = async (command) => {
 const getDocumentImage = async (command) => {
     let out = await execute(async () => {
 
+        // Sem colorSpace o getPixels devolve o modo do documento: em Tons de Cinza de
+        // 3000x3000 o encodeImageData travou a fila e derrubou o Photoshop (2x, 29/09/2026);
+        // 1000 cinza e 3000 RGB passavam. RGB leva todo documento ao caminho que passa.
         const pixelsOpt = {
-            applyAlpha: true
+            applyAlpha: true,
+            colorSpace: "RGB"
         };
 
         const imgObj = await imaging.getPixels(pixelsOpt);
