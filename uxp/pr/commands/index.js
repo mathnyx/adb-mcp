@@ -129,8 +129,11 @@ const requiresActiveProject = (command) => {
     return !["createProject", "openProject"].includes(command.action);
 };
 
+const extra = require("./extra.js");
+
 const commandHandlers = {
-    ...core.commandHandlers
+    ...core.commandHandlers,
+    ...extra.commandHandlers
 };
 
 module.exports = {

@@ -73,7 +73,8 @@
     "network": {
       "domains": "all"
     },
-    "localFileSystem": "fullAccess"
+    "localFileSystem": "fullAccess",
+    "allowCodeGenerationFromStrings": true
   },
   "icons": [
     {
