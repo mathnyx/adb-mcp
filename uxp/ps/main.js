@@ -224,7 +224,15 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 window.addEventListener("load", (event) => {
-    if (getConnectOnLaunch()) {
+    if (getConnectOnLaunch() && !(socket && socket.connected)) {
         connectToServer();
     }
 });
+
+// Recarga a quente do UDT (Watch) não dispara "load": sem isto o plugin
+// recarrega desconectado e só volta com clique em Connect (medido 06/10/2026).
+setTimeout(() => {
+    if (getConnectOnLaunch() && !(socket && socket.connected)) {
+        connectToServer();
+    }
+}, 1500);
